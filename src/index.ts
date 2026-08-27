@@ -9,11 +9,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import axios from 'axios';
 
-// Configuración de variables de entorno
+// Environment variable configuration
 const MOODLE_API_URL = process.env.MOODLE_API_URL;
 const MOODLE_API_TOKEN = process.env.MOODLE_API_TOKEN;
 
-// Verificar que las variables de entorno estén definidas
+// Verify that the environment variables are defined
 if (!MOODLE_API_URL) {
   throw new Error('MOODLE_API_URL environment variable is required');
 }
@@ -22,7 +22,7 @@ if (!MOODLE_API_TOKEN) {
   throw new Error('MOODLE_API_TOKEN environment variable is required');
 }
 
-// Interfaces para los tipos de datos
+// Interfaces for the data types
 interface Course {
   id: number;
   shortname: string;
@@ -83,7 +83,7 @@ class MoodleMcpServer {
       tools: [
         {
           name: 'get_my_courses',
-          description: 'Obtiene la lista de cursos en los que el usuario está inscrito',
+          description: 'Get the list of courses the user is enrolled in',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -92,13 +92,13 @@ class MoodleMcpServer {
         },
         {
           name: 'get_assignments',
-          description: 'Obtiene las tareas de los cursos del usuario, con fechas de entrega',
+          description: 'Get the assignments for the user\'s courses, including due dates',
           inputSchema: {
             type: 'object',
             properties: {
               courseId: {
                 type: 'number',
-                description: 'ID opcional del curso. Si no se proporciona, se usan todos los cursos inscritos.',
+                description: 'Optional course ID. If not provided, all enrolled courses are used.',
               },
             },
             required: [],
@@ -106,13 +106,13 @@ class MoodleMcpServer {
         },
         {
           name: 'get_pending_assignments',
-          description: 'Obtiene las tareas que el usuario aún no ha entregado, ordenadas por fecha de entrega',
+          description: 'Get the assignments the user has not submitted yet, sorted by due date',
           inputSchema: {
             type: 'object',
             properties: {
               courseId: {
                 type: 'number',
-                description: 'ID opcional del curso. Si no se proporciona, se usan todos los cursos inscritos.',
+                description: 'Optional course ID. If not provided, all enrolled courses are used.',
               },
             },
             required: [],
@@ -120,13 +120,13 @@ class MoodleMcpServer {
         },
         {
           name: 'get_my_submission_status',
-          description: 'Obtiene el estado de la propia entrega de una tarea, incluyendo calificación y feedback recibido',
+          description: 'Get the status of the user\'s own submission for an assignment, including grade and feedback received',
           inputSchema: {
             type: 'object',
             properties: {
               assignmentId: {
                 type: 'number',
-                description: 'ID de la tarea',
+                description: 'Assignment ID',
               },
             },
             required: ['assignmentId'],
@@ -134,13 +134,13 @@ class MoodleMcpServer {
         },
         {
           name: 'get_quizzes',
-          description: 'Obtiene los quizzes de los cursos del usuario, con fechas de apertura y cierre',
+          description: 'Get the quizzes for the user\'s courses, including open and close dates',
           inputSchema: {
             type: 'object',
             properties: {
               courseId: {
                 type: 'number',
-                description: 'ID opcional del curso. Si no se proporciona, se usan todos los cursos inscritos.',
+                description: 'Optional course ID. If not provided, all enrolled courses are used.',
               },
             },
             required: [],
@@ -148,13 +148,13 @@ class MoodleMcpServer {
         },
         {
           name: 'get_my_quiz_grade',
-          description: 'Obtiene la propia calificación en un quiz específico',
+          description: 'Get the user\'s own grade for a specific quiz',
           inputSchema: {
             type: 'object',
             properties: {
               quizId: {
                 type: 'number',
-                description: 'ID del quiz',
+                description: 'Quiz ID',
               },
             },
             required: ['quizId'],
@@ -205,7 +205,7 @@ class MoodleMcpServer {
     });
   }
 
-  // El token identifica al usuario, así que su ID se resuelve una sola vez
+  // The token identifies the user, so their ID is resolved only once
   private async getUserId(): Promise<number> {
     if (this.userId !== undefined) {
       return this.userId;
@@ -222,7 +222,7 @@ class MoodleMcpServer {
     if (!response.data?.userid) {
       throw new McpError(
         ErrorCode.InternalError,
-        'No se pudo determinar el usuario asociado al token de Moodle'
+        'Could not determine the user associated with the Moodle token'
       );
     }
 
@@ -345,10 +345,10 @@ class MoodleMcpServer {
         status,
         duedate: assignment.duedate
           ? new Date(assignment.duedate * 1000).toISOString()
-          : 'Sin fecha de entrega',
+          : 'No due date',
         cutoffdate: assignment.cutoffdate
           ? new Date(assignment.cutoffdate * 1000).toISOString()
-          : 'Sin fecha límite',
+          : 'No cut-off date',
         duedateTimestamp: assignment.duedate,
       }))
       .sort((a, b) => (a.duedateTimestamp || Infinity) - (b.duedateTimestamp || Infinity))
@@ -360,7 +360,7 @@ class MoodleMcpServer {
           type: 'text',
           text: pending.length > 0
             ? JSON.stringify(pending, null, 2)
-            : 'No hay tareas pendientes de entrega.',
+            : 'There are no pending assignments to submit.',
         },
       ],
     };
@@ -394,8 +394,8 @@ class MoodleMcpServer {
       submitted: submission.status === 'submitted',
       timemodified: submission.timemodified
         ? new Date(submission.timemodified * 1000).toISOString()
-        : 'Sin entrega',
-      grade: feedback.grade?.grade ?? 'No calificado',
+        : 'Not submitted',
+      grade: feedback.grade?.grade ?? 'Not graded',
       gradeForDisplay: feedback.gradefordisplay || null,
       feedback: feedback.plugins
         ?.flatMap((plugin: any) => plugin.editorfields || [])
@@ -463,7 +463,7 @@ class MoodleMcpServer {
     const result = {
       quizId: args.quizId,
       hasGrade: response.data.hasgrade,
-      grade: response.data.hasgrade ? response.data.grade : 'No calificado',
+      grade: response.data.hasgrade ? response.data.grade : 'Not graded',
     };
 
     return {
