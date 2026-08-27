@@ -89,6 +89,13 @@ class MoodleMcpServer {
             properties: {},
             required: [],
           },
+          annotations: {
+            title: 'Get my courses',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
         },
         {
           name: 'get_assignments',
@@ -102,6 +109,13 @@ class MoodleMcpServer {
               },
             },
             required: [],
+          },
+          annotations: {
+            title: 'Get assignments',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
           },
         },
         {
@@ -117,6 +131,13 @@ class MoodleMcpServer {
             },
             required: [],
           },
+          annotations: {
+            title: 'Get pending assignments',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
         },
         {
           name: 'get_my_submission_status',
@@ -130,6 +151,13 @@ class MoodleMcpServer {
               },
             },
             required: ['assignmentId'],
+          },
+          annotations: {
+            title: 'Get my submission status',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
           },
         },
         {
@@ -145,6 +173,13 @@ class MoodleMcpServer {
             },
             required: [],
           },
+          annotations: {
+            title: 'Get quizzes',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
         },
         {
           name: 'get_my_quiz_grade',
@@ -158,6 +193,13 @@ class MoodleMcpServer {
               },
             },
             required: ['quizId'],
+          },
+          annotations: {
+            title: 'Get my quiz grade',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
           },
         },
       ],
