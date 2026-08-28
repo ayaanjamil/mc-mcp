@@ -7,19 +7,56 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import axios from 'axios';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import axios, { AxiosInstance } from 'axios';
+import { ConfigResult, loadConfig } from './config.js';
+import {
+  MoodleApiError,
+  MoodleNetworkError,
+  REQUIRED_WSFUNCTIONS,
+  createClient,
+  describeNetworkError,
+  fetchPublicConfig,
+  verifyToken,
+} from './moodle.js';
 
-// Environment variable configuration
-const MOODLE_API_URL = process.env.MOODLE_API_URL;
-const MOODLE_API_TOKEN = process.env.MOODLE_API_TOKEN;
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// Verify that the environment variables are defined
-if (!MOODLE_API_URL) {
-  throw new Error('MOODLE_API_URL environment variable is required');
+// Thrown when a tool is called before setup has run. Deliberately not thrown at
+// module load: a top-level throw kills the process before the stdio transport
+// connects, and the client can only report "server disconnected".
+class SetupRequiredError extends Error {
+  constructor(readonly result: Extract<ConfigResult, { ok: false }>) {
+    super('Moodle is not set up yet');
+    this.name = 'SetupRequiredError';
+  }
 }
 
-if (!MOODLE_API_TOKEN) {
-  throw new Error('MOODLE_API_TOKEN environment variable is required');
+function setupMessage(result: Extract<ConfigResult, { ok: false }>): string {
+  const command = `cd ${repoRoot} && npm run setup`;
+
+  switch (result.reason) {
+    case 'malformed':
+      return (
+        `The Moodle settings file at ${result.path} is damaged` +
+        `${result.detail ? ` (${result.detail})` : ''}.\n\n` +
+        `Fix: run this in a terminal to recreate it:\n\n    ${command}`
+      );
+    case 'incomplete':
+      return (
+        `The Moodle settings at ${result.path} are incomplete` +
+        `${result.detail ? ` (${result.detail})` : ''}.\n\n` +
+        `Fix: run this in a terminal:\n\n    ${command}`
+      );
+    default:
+      return (
+        'Moodle is not connected yet.\n\n' +
+        `Fix: run this in a terminal:\n\n    ${command}\n\n` +
+        'It walks you through signing in to your Moodle site once, then Claude ' +
+        'can read your courses, deadlines and grades.'
+      );
+  }
 }
 
 // Interfaces for the data types
@@ -44,10 +81,13 @@ interface Assignment {
 
 class MoodleMcpServer {
   private server: Server;
-  private axiosInstance;
+  private client?: AxiosInstance;
+  private configResult: ConfigResult;
   private userId?: number;
 
   constructor() {
+    this.configResult = loadConfig();
+
     this.server = new Server(
       {
         name: 'moodle-mcp-server',
@@ -59,14 +99,6 @@ class MoodleMcpServer {
         },
       }
     );
-
-    this.axiosInstance = axios.create({
-      baseURL: MOODLE_API_URL,
-      params: {
-        wstoken: MOODLE_API_TOKEN,
-        moodlewsrestformat: 'json',
-      },
-    });
 
     this.setupToolHandlers();
 
@@ -202,6 +234,23 @@ class MoodleMcpServer {
             openWorldHint: true,
           },
         },
+        {
+          name: 'moodle_check_setup',
+          description:
+            'Diagnose the Moodle connection. Use this when another Moodle tool fails, or when the user asks why Moodle is not working. Reports whether the settings file exists, whether the site is reachable, and whether the token is still valid.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            required: [],
+          },
+          annotations: {
+            title: 'Check Moodle setup',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+        },
       ],
     }));
 
@@ -209,42 +258,167 @@ class MoodleMcpServer {
       console.error(`[Tool] Executing tool: ${request.params.name}`);
 
       try {
-        switch (request.params.name) {
-          case 'get_my_courses':
-            return await this.getMyCourses();
-          case 'get_assignments':
-            return await this.getAssignments(request.params.arguments);
-          case 'get_pending_assignments':
-            return await this.getPendingAssignments(request.params.arguments);
-          case 'get_my_submission_status':
-            return await this.getMySubmissionStatus(request.params.arguments);
-          case 'get_quizzes':
-            return await this.getQuizzes(request.params.arguments);
-          case 'get_my_quiz_grade':
-            return await this.getMyQuizGrade(request.params.arguments);
-          default:
-            throw new McpError(
-              ErrorCode.MethodNotFound,
-              `Unknown tool: ${request.params.name}`
-            );
-        }
+        return await this.dispatch(request.params.name, request.params.arguments);
       } catch (error) {
-        console.error('[Error]', error);
-        if (axios.isAxiosError(error)) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Moodle API error: ${error.response?.data?.message || error.message
-                  }`,
-              },
-            ],
-            isError: true,
-          };
+        // An auth failure may just mean the user re-ran setup since this
+        // process started. Re-read the config and retry exactly once.
+        if (error instanceof MoodleApiError && error.isAuthFailure) {
+          if (this.reloadConfig()) {
+            console.error('[Auth] Token changed on disk, retrying once');
+            try {
+              return await this.dispatch(request.params.name, request.params.arguments);
+            } catch (retryError) {
+              return this.toErrorResult(retryError);
+            }
+          }
         }
-        throw error;
+
+        return this.toErrorResult(error);
       }
     });
+  }
+
+  private async dispatch(name: string, args: unknown) {
+    switch (name) {
+      case 'get_my_courses':
+        return await this.getMyCourses();
+      case 'get_assignments':
+        return await this.getAssignments(args);
+      case 'get_pending_assignments':
+        return await this.getPendingAssignments(args);
+      case 'get_my_submission_status':
+        return await this.getMySubmissionStatus(args);
+      case 'get_quizzes':
+        return await this.getQuizzes(args);
+      case 'get_my_quiz_grade':
+        return await this.getMyQuizGrade(args);
+      case 'moodle_check_setup':
+        return await this.checkSetup();
+      default:
+        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+    }
+  }
+
+  private errorResult(text: string) {
+    return { content: [{ type: 'text', text }], isError: true };
+  }
+
+  private toErrorResult(error: unknown) {
+    console.error('[Error]', error);
+
+    if (error instanceof SetupRequiredError) {
+      return this.errorResult(setupMessage(error.result));
+    }
+
+    if (error instanceof MoodleApiError) {
+      return this.errorResult(error.userMessage);
+    }
+
+    if (error instanceof MoodleNetworkError) {
+      return this.errorResult(error.message);
+    }
+
+    if (axios.isAxiosError(error)) {
+      const host = this.configResult.ok
+        ? new URL(this.configResult.config.siteUrl).host
+        : 'your Moodle site';
+      return this.errorResult(describeNetworkError(error, host));
+    }
+
+    if (error instanceof McpError) {
+      throw error;
+    }
+
+    throw error;
+  }
+
+  // Works with no config on purpose: "why isn't Moodle working?" should be
+  // answerable in the chat rather than by reading server logs.
+  private async checkSetup() {
+    const lines: string[] = [];
+
+    if (!this.configResult.ok) {
+      lines.push('Not connected to Moodle yet.', '', setupMessage(this.configResult));
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    }
+
+    const { siteUrl } = this.configResult.config;
+    lines.push(`Settings file: ${this.configResult.path}`);
+    lines.push(`Site: ${siteUrl}`);
+    if (this.configResult.source !== 'file') {
+      lines.push(
+        'Note: MOODLE_API_URL/MOODLE_API_TOKEN in the environment are overriding the settings file.'
+      );
+    }
+
+    try {
+      const publicConfig = await fetchPublicConfig(siteUrl);
+      const enabled =
+        publicConfig.enablewebservices === 1 && publicConfig.enablemobilewebservice === 1;
+      lines.push(
+        `Site reachable: yes — "${publicConfig.sitename}", app connections ${enabled ? 'enabled' : 'DISABLED on the site'}`
+      );
+    } catch (error) {
+      lines.push(
+        `Site reachable: NO — ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    try {
+      const siteInfo = await verifyToken(siteUrl, this.configResult.config.token);
+      lines.push(`Token: valid — signed in as ${siteInfo.username} (id ${siteInfo.userid})`);
+
+      const available = new Set((siteInfo.functions ?? []).map((fn) => fn.name));
+      const missing = REQUIRED_WSFUNCTIONS.filter((fn) => !available.has(fn));
+      if (available.size === 0) {
+        lines.push('Functions: the site did not list them.');
+      } else if (missing.length === 0) {
+        lines.push(`Functions: all ${REQUIRED_WSFUNCTIONS.length} required ones are available.`);
+      } else {
+        lines.push(`Functions: missing ${missing.join(', ')} — the tools using them will fail.`);
+      }
+    } catch (error) {
+      if (error instanceof MoodleApiError) {
+        lines.push(`Token: NOT valid — ${error.errorcode}`, '', error.userMessage);
+      } else {
+        lines.push(
+          `Token: could not be checked — ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    lines.push('', `For a full checkup run: cd ${repoRoot} && npm run doctor`);
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  private ensureClient(): AxiosInstance {
+    if (this.client) {
+      return this.client;
+    }
+
+    if (!this.configResult.ok) {
+      throw new SetupRequiredError(this.configResult);
+    }
+
+    const { siteUrl, token } = this.configResult.config;
+    this.client = createClient(siteUrl, token);
+    return this.client;
+  }
+
+  // Moodle revokes tokens on password change, so an expired token is the most
+  // common recurring failure. Re-reading the config lets `npm run setup` take
+  // effect without the user having to fully quit and reopen Claude.
+  private reloadConfig(): boolean {
+    const previousToken = this.configResult.ok ? this.configResult.config.token : undefined;
+
+    this.client = undefined;
+    this.userId = undefined;
+    this.configResult = loadConfig();
+
+    return (
+      this.configResult.ok && this.configResult.config.token !== previousToken
+    );
   }
 
   // The token identifies the user, so their ID is resolved only once
@@ -255,7 +429,7 @@ class MoodleMcpServer {
 
     console.error('[API] Requesting site info');
 
-    const response = await this.axiosInstance.get('', {
+    const response = await this.ensureClient().get('', {
       params: {
         wsfunction: 'core_webservice_get_site_info',
       },
@@ -286,7 +460,7 @@ class MoodleMcpServer {
 
     console.error(`[API] Requesting courses for user ${userId}`);
 
-    const response = await this.axiosInstance.get('', {
+    const response = await this.ensureClient().get('', {
       params: {
         wsfunction: 'core_enrol_get_users_courses',
         userid: userId,
@@ -310,7 +484,7 @@ class MoodleMcpServer {
 
     console.error(`[API] Requesting assignments for courses ${courseIds.join(', ')}`);
 
-    const response = await this.axiosInstance.get('', {
+    const response = await this.ensureClient().get('', {
       params: {
         wsfunction: 'mod_assign_get_assignments',
         courseids: courseIds,
@@ -362,7 +536,7 @@ class MoodleMcpServer {
 
     const statuses = await Promise.all(
       assignments.map(async (assignment: any) => {
-        const response = await this.axiosInstance.get('', {
+        const response = await this.ensureClient().get('', {
           params: {
             wsfunction: 'mod_assign_get_submission_status',
             assignid: assignment.id,
@@ -417,7 +591,7 @@ class MoodleMcpServer {
 
     console.error(`[API] Requesting submission status for assignment ${args.assignmentId}`);
 
-    const response = await this.axiosInstance.get('', {
+    const response = await this.ensureClient().get('', {
       params: {
         wsfunction: 'mod_assign_get_submission_status',
         assignid: args.assignmentId,
@@ -466,7 +640,7 @@ class MoodleMcpServer {
 
     console.error(`[API] Requesting quizzes for courses ${courseIds.join(', ')}`);
 
-    const response = await this.axiosInstance.get('', {
+    const response = await this.ensureClient().get('', {
       params: {
         wsfunction: 'mod_quiz_get_quizzes_by_courses',
         courseids: courseIds,
@@ -494,7 +668,7 @@ class MoodleMcpServer {
 
     console.error(`[API] Requesting quiz grade for quiz ${args.quizId}`);
 
-    const response = await this.axiosInstance.get('', {
+    const response = await this.ensureClient().get('', {
       params: {
         wsfunction: 'mod_quiz_get_user_best_grade',
         quizid: args.quizId,

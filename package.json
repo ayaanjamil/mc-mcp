@@ -1,17 +1,24 @@
 {
   "name": "moodle-mcp-server",
   "version": "0.1.0",
-  "description": "Moddle MCP server",
+  "description": "Moodle MCP server: read your own courses, deadlines and grades from Claude",
   "private": true,
   "type": "module",
   "bin": {
-    "moodle-mcp-server": "./build/index.js"
+    "moodle-mcp-server": "./build/index.js",
+    "moodle-mcp-setup": "./build/setup.js"
   },
   "files": [
     "build"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "build": "tsc && node -e \"const f=require('fs');for(const p of ['build/index.js','build/setup.js'])f.chmodSync(p,'755')\"",
+    "setup": "npm run --silent build && node build/setup.js",
+    "doctor": "npm run --silent build && node build/setup.js --doctor",
+    "test": "npm run --silent build && node --test build/*.test.js",
     "prepare": "npm run build",
     "watch": "tsc --watch",
     "inspector": "npx @modelcontextprotocol/inspector build/index.js"

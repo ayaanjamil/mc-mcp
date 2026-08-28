@@ -28,91 +28,140 @@ The server acts only as the user who owns the API token, and it is read-only: th
 - `get_my_quiz_grade` - Retrieves the user's own best grade on a quiz
   - Requires `quizId`
 
+### Diagnostics
+- `moodle_check_setup` - Reports whether the connection is working
+  - Checks the settings file, whether the site is reachable, and whether the token is still valid
+  - Works even when nothing is configured yet, so you can ask Claude why Moodle is not working
+
 ## Requirements
 
-- Node.js (v14 or higher)
-- Moodle API token for the student account
+- Node.js 18 or newer
+- A Moodle account (a student account is enough)
 
 ## Installation
 
-1. Clone this repository:
 ```bash
-git clone https://github.com/your-username/moodle-mcp-server.git
+git clone <your fork's URL> moodle-mcp-server
 cd moodle-mcp-server
-```
-
-2. Install dependencies:
-```bash
 npm install
+npm run setup
 ```
 
-3. Create a `.env` file with the following configuration:
-```
-MOODLE_API_URL=https://your-moodle.com/webservice/rest/server.php
-MOODLE_API_TOKEN=your_api_token
-```
+That is the whole install. `npm run setup` walks you through signing in to your
+Moodle site once, gets a token for your own account, checks it works, and stores
+it in `~/.config/moodle-mcp/config.json` (readable only by you).
 
-See [Obtaining a Moodle API Token](#obtaining-a-moodle-api-token) if you do not have a token yet.
-Note that on many university sites the token is not available from the admin pages, and the
-`.env` file is only read if your MCP client passes these variables through (see the
-`env` block under [Usage with Claude](#usage-with-claude)).
+You do not need to find a token by hand, and you do not need a `.env` file.
+If you would rather do it manually anyway, see
+[Manual token setup](#manual-token-setup-advanced).
 
-4. Build the server:
+Setup finishes by printing the exact snippet to paste into your Claude client,
+with the real paths already filled in. It does not edit your Claude
+configuration for you. You can print those snippets again at any time:
+
 ```bash
-npm run build
+npm run setup -- --print-client-config
 ```
+
+### Options
+
+```
+npm run setup -- --help
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--doctor` | Check an existing setup instead of creating one (same as `npm run doctor`) |
+| `--json` | With `--doctor`, print machine-readable output |
+| `--site <address>` | Skip the site question, e.g. `--site mycourses.aalto.fi` |
+| `--token <token>` | Set the token directly, no prompts. Puts the token in your shell history |
+| `--force` | Reconfigure even if you are already set up |
+| `--no-clipboard` | Do not watch the clipboard; paste the link instead |
+| `--no-browser` | Print the sign-in link rather than opening a browser |
 
 ## Usage with Claude
 
-To use with Claude Desktop, add the server configuration:
+Setup prints the snippet for your platform. It looks like this:
 
-On MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`  
-On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
+**Claude Desktop** — `~/Library/Application Support/Claude/claude_desktop_config.json`
+on macOS, `%APPDATA%/Claude/claude_desktop_config.json` on Windows:
 
 ```json
 {
   "mcpServers": {
-    "moodle-mcp-server": {
-      "command": "/path/to/node",
-      "args": [
-        "/path/to/moodle-mcp-server/build/index.js"
-      ],
-      "env": {
-        "MOODLE_API_URL": "https://your-moodle.com/webservice/rest/server.php",
-        "MOODLE_API_TOKEN": "your_moodle_api_token"
-      },
-      "disabled": false,
-      "autoApprove": []
+    "moodle": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/moodle-mcp-server/build/index.js"]
     }
   }
 }
 ```
 
-For Windows users, the paths would use backslashes:
+**Claude Code:**
 
-```json
-{
-  "mcpServers": {
-    "moodle-mcp-server": {
-      "command": "C:\\path\\to\\node.exe",
-      "args": [
-        "C:\\path\\to\\moodle-mcp-server\\build\\index.js"
-      ],
-      "env": {
-        "MOODLE_API_URL": "https://your-moodle.com/webservice/rest/server.php",
-        "MOODLE_API_TOKEN": "your_moodle_api_token"
-      },
-      "disabled": false,
-      "autoApprove": []
-    }
-  }
-}
+```bash
+claude mcp add moodle --scope user -- /absolute/path/to/node /absolute/path/to/moodle-mcp-server/build/index.js
 ```
 
-Once configured, Claude will be able to:
+Two things worth knowing about that snippet:
+
+- **Use the absolute path to `node`, not `"node"`.** Claude Desktop launches from
+  the GUI with a minimal `PATH` that does not include nvm or Homebrew, so
+  `"command": "node"` is a common cause of "server disconnected". Setup fills in
+  the absolute path for you.
+- **There is no token in it.** The token lives in your settings file, so you can
+  re-run `npm run setup` without touching Claude's configuration.
+
+If you already have other servers listed, add the `"moodle"` block alongside
+them rather than replacing the file. Then quit Claude Desktop completely
+(Cmd+Q, not just the window) and open it again.
+
+Once configured, Claude can:
 - List the courses you are enrolled in
 - Show which assignments you still need to submit, and when they are due
 - Report the grade and feedback you received on an assignment or quiz
+
+Try: *"What Moodle assignments do I have due this week?"*
+
+## When something goes wrong
+
+Run the checkup first. It tests every step separately, so it can tell
+"your token expired" apart from "the site turned web services off":
+
+```bash
+npm run doctor
+```
+
+You can also just ask Claude — the `moodle_check_setup` tool runs the same
+checks and works even when nothing is configured yet.
+
+| What you see | What it means | Fix |
+| --- | --- | --- |
+| `Moodle is not connected yet.` | No settings file, and no environment variables either | `npm run setup` |
+| `Your Moodle token is no longer valid.` | Moodle revoked the token, usually after a password change | `npm run setup`. No Claude restart needed |
+| `The Moodle settings file at ... is damaged` | The config file is not valid JSON | `npm run setup` recreates it |
+| `Moodle refused the token (accessexception).` | Web services off site-wide, or the token is restricted to another network | `npm run doctor` |
+| `Your account is not allowed to read that.` | The course hides that item from students | Nothing to fix; the tools only read your own data |
+| `The Moodle mobile web service is not enabled` | The site has not enabled it | Ask your Moodle administrator |
+| `Could not find <host>.` | The site address is misspelled, or you are offline | `npm run setup` and re-enter it |
+| `Could not reach <host>.` | Network, or your Moodle needs the university VPN | Connect to the VPN and retry |
+| `Web services are turned off on ...` | Site-wide setting | Ask an administrator to enable web services |
+| Claude shows the server as disconnected | Usually a stale build or a `node` path that no longer exists | `npm install && npm run doctor` |
+
+`npm run doctor` also warns when `MOODLE_API_URL` or `MOODLE_API_TOKEN` are set
+in your environment, because those override the settings file and otherwise make
+"I re-ran setup and it still uses the old token" impossible to diagnose.
+
+## Where your token is stored
+
+`~/.config/moodle-mcp/config.json`, with permissions `600` in a directory with
+permissions `700`, so only your user account can read it. The file holds your
+Moodle address and the token, and nothing else. The private token that Moodle
+issues alongside it is deliberately discarded, since nothing here uses it.
+
+For backwards compatibility, `MOODLE_API_URL` and `MOODLE_API_TOKEN` still work
+and take precedence per field, so an existing `env` block in your Claude
+configuration keeps working untouched.
 
 ## Development
 
@@ -120,6 +169,15 @@ For development with auto-rebuild:
 ```bash
 npm run watch
 ```
+
+Run the tests:
+```bash
+npm test
+```
+
+These cover the pure functions: token parsing (five input shapes, including the
+trap that a bare 32-hex token is also valid base64 and must not be decoded),
+site URL normalisation, and the config file round-trip.
 
 ### Debugging
 
@@ -131,26 +189,15 @@ npm run inspector
 
 The Inspector will provide a URL to access debugging tools in your browser.
 
-## Obtaining a Moodle API Token
+## Manual token setup (advanced)
 
-### Option A: the Security keys page
+`npm run setup` does all of this for you. This section is here for debugging, or
+if you would rather not run the wizard.
 
-1. Log in to your Moodle site
-2. Go to `/user/managetoken.php` (also reachable from your profile as **Security keys**)
-3. Look for a row in the **web service tokens** table with a service such as *Moodle mobile web service*
-4. Copy that token into your `.env` file
+<details>
+<summary>Get a token by hand</summary>
 
-If the page shows only a **Calendar export key** or **RSS token**, you do not have a web service
-token. Those keys are 32 hex characters and look identical to a real token, but they are not valid
-as a `wstoken` and will fail with `invalidtoken`. Use Option B instead.
-
-### Option B: the mobile service login flow (SSO sites)
-
-Many universities use single sign-on and never grant students a token on the Security keys page. If
-the mobile web service is enabled, you can still obtain a token for your own account through the
-mobile app's browser login flow.
-
-First check what your site allows:
+### First, check what your site allows
 
 ```bash
 curl -s -X POST "https://YOUR-MOODLE/lib/ajax/service-nologin.php?info=tool_mobile_get_public_config" \
@@ -158,36 +205,59 @@ curl -s -X POST "https://YOUR-MOODLE/lib/ajax/service-nologin.php?info=tool_mobi
   -d '[{"index":0,"methodname":"tool_mobile_get_public_config","args":{}}]'
 ```
 
-You need `enablewebservices: 1` and `enablemobilewebservice: 1` in the response. A `typeoflogin` of
-`2` or `3` means the site logs in via browser (SSO), which is the case this flow covers.
+You need `enablewebservices: 1` and `enablemobilewebservice: 1`. The
+`typeoflogin` field tells you which route applies:
 
-Then, **on a desktop browser** — not a phone:
+- `1` — the site has its own login form. Try **Option A**.
+- `2` or `3` — the site logs in through the browser (single sign-on, as at
+  Aalto). Use **Option B**.
 
-1. Open Chrome DevTools on the **Network** tab and enable **Preserve log**. The token arrives as a
-   redirect after login and is lost from the log otherwise.
-2. Navigate to the launch URL, replacing `PASSPORT` with any random number:
+### Option A: the Security keys page
 
-   ```
-   https://YOUR-MOODLE/admin/tool/mobile/launch.php?service=moodle_mobile_app&passport=PASSPORT&urlscheme=moodlemobile
-   ```
+1. Log in to your Moodle site
+2. Go to `/user/managetoken.php` (in your profile as **Security keys**)
+3. Find a row whose service is something like *Moodle mobile web service*
+4. Copy that token
 
-3. Complete the login.
-4. The browser will try to open `moodlemobile://token=...` and may prompt *"Open Moodle?"*. Dismiss
-   the prompt, then find that URL in the Network log and copy it.
-5. Decode it. The payload is **three** `:::`-separated fields — a signature, the token, and a private
-   token — so the base64 string itself is not the token:
+If the page only shows a **Calendar export key** or **RSS token**, you do not
+have a web service token. Those are also 32 hex characters and look identical,
+but they are not valid as a `wstoken` and fail with `invalidtoken`. There is no
+way to tell them apart by looking; only a live check can. Use Option B.
+
+### Option B: the mobile service login flow (SSO sites)
+
+Many universities use single sign-on and never grant students a token on the
+Security keys page. The mobile app's browser login flow still works.
+
+On a desktop browser, open this, replacing `PASSPORT` with any random number:
+
+```
+https://YOUR-MOODLE/admin/tool/mobile/launch.php?service=moodle_mobile_app&passport=PASSPORT&urlscheme=moodlemcp&confirmed=1
+```
+
+`confirmed=1` is the important part. Without it Moodle immediately redirects to
+`moodlemobile://token=...` and you have to dig the URL out of DevTools. With it,
+Moodle renders a normal page containing a **"Click here to launch the app"**
+link instead.
+
+1. Sign in as usual
+2. Right-click that link and choose **Copy Link Address** (Safari: *Copy Link*)
+3. Decode it. The payload has three `:::`-separated fields — a site signature,
+   the token, and a private token — so the base64 string itself is not the token:
 
    ```bash
    BLOB='moodlemobile://token=PASTE_HERE'
    printf '%s' "${BLOB##*token=}" | base64 -d 2>/dev/null || printf '%s' "${BLOB##*token=}" | base64 -D
    ```
 
-   Take the **middle** field (32 hex characters) as your `MOODLE_API_TOKEN`.
+   Take the **middle** field (32 hex characters). Note the first field is also
+   32 hex characters, so "the hex-looking one" is ambiguous — it has to be the
+   second.
 
-Do not run this flow on a phone with the Moodle app installed: the OS hands the URL to the app,
-which stores the token internally where you cannot read it.
+You may see a small popup when the page tries to open the link. Dismiss it; the
+link stays on the page either way.
 
-### Verifying the token
+### Verifying a token
 
 ```bash
 curl -s -X POST "https://YOUR-MOODLE/webservice/rest/server.php" \
@@ -196,28 +266,24 @@ curl -s -X POST "https://YOUR-MOODLE/webservice/rest/server.php" \
   -d "moodlewsrestformat=json"
 ```
 
-A valid token returns your `username`, `userid`, and the list of functions the service exposes. An
-invalid one returns `{"errorcode":"invalidtoken","message":"Invalid token - token not found"}`.
+A valid token returns your `username`, `userid`, and the functions the service
+exposes. An invalid one returns
+`{"errorcode":"invalidtoken","message":"Invalid token - token not found"}` —
+with HTTP status **200**, which is why naive clients miss it.
 
-Note that a function appearing in that list means the *service* exposes it, not that your account
-may call it. Per-course capability checks still apply, so calls needing a teacher role fail with
-`nopermissions` even when the function is listed. The tools in this server only read your own data,
-so this does not affect normal use.
+A function appearing in that list means the *service* exposes it, not that your
+account may call it. Per-course capability checks still apply. The tools here
+only read your own data, so this does not affect normal use.
 
-### Worked example: Aalto University MyCourses
+### Using a token you already have
 
-`mycourses.aalto.fi` is SSO-only and grants students no token on the Security keys page, so
-Option B is required:
-
-```
-MOODLE_API_URL=https://mycourses.aalto.fi/webservice/rest/server.php
+```bash
+npm run setup -- --site YOUR-MOODLE --token YOUR_TOKEN
 ```
 
-Launch URL:
+This still verifies the token against the site before saving it.
 
-```
-https://mycourses.aalto.fi/admin/tool/mobile/launch.php?service=moodle_mobile_app&passport=12345678&urlscheme=moodlemobile
-```
+</details>
 
 ## Security
 
@@ -228,3 +294,8 @@ https://mycourses.aalto.fi/admin/tool/mobile/launch.php?service=moodle_mobile_ap
 ## License
 
 [MIT](LICENSE)
+
+## Credits
+
+A fork of [peancor/moodle-mcp-server](https://github.com/peancor/moodle-mcp-server),
+rewritten around a read-only student tool set and a guided setup flow. MIT licensed.
