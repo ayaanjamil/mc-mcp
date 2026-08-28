@@ -291,9 +291,29 @@ This still verifies the token against the site before saving it.
 - The token determines whose data the server can read - use your own student token
 - Use a token with the minimum necessary permissions
 
+## Legal
+
+**Use your own account.** The server reads whatever the token you supply is allowed
+to read. Only use a token issued for your own account, and only against a Moodle
+site you are authorised to access. Accessing another person's data, or a site you
+have no account on, is your responsibility - and is likely a breach of your
+institution's acceptable use policy.
+
+**Your institution's rules still apply.** Many schools restrict automated access to
+their Moodle instance or to web services in general. Check your acceptable use
+policy before running this, and be aware that requests made through the server are
+logged by the site just like any other API call.
+
+**Data handling.** Course, assignment, and quiz data fetched from your Moodle site
+is passed to whichever MCP client you connect (for example Claude Desktop) and is
+subject to that client's own privacy terms. Nothing is sent anywhere else by this
+server. Your token is stored locally in `~/.config/moodle-mcp/config.json`; see
+[Where your token is stored](#where-your-token-is-stored).
+
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) - Copyright (c) 2025 peancor and contributors.
 
 ## Credits
 
