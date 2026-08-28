@@ -41,7 +41,7 @@ The server acts only as the user who owns the API token, and it is read-only: th
 ## Installation
 
 ```bash
-git clone <your fork's URL> moodle-mcp-server
+git clone https://github.com/ayaanjamil/mc-mcp.git moodle-mcp-server
 cd moodle-mcp-server
 npm install
 npm run setup
