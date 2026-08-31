@@ -12,6 +12,9 @@ The server acts only as the user who owns the API token, and it is read-only: th
 - `get_course_contents` - Retrieves the visible course page contents
   - Includes sections, summaries, activities, resources, links, and file metadata
   - Requires `courseId`
+- `get_course_pdfs_text` - Retrieves text from visible PDFs in a course
+  - Downloads PDF files listed on the course page and extracts their text
+  - Requires `courseId`; optionally accepts `maxFiles` and `maxCharsPerFile`
 - `get_announcements` - Retrieves recent course announcements
   - Reads the course news/announcements forum, including renamed variants where possible
   - Requires `courseId`; optionally accepts `limit`
@@ -128,6 +131,7 @@ them rather than replacing the file. Then quit Claude Desktop completely
 Once configured, Claude can:
 - List the courses you are enrolled in
 - Read visible course page sections, activities, resource links and file metadata
+- Extract text from visible course PDFs
 - Summarize recent course announcements
 - Check upcoming course calendar events and lecture schedules
 - Show which assignments you still need to submit, and when they are due
