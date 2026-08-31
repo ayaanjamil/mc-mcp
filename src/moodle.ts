@@ -104,6 +104,10 @@ export const REQUIRED_WSFUNCTIONS = [
   'mod_assign_get_submission_status',
   'mod_quiz_get_quizzes_by_courses',
   'mod_quiz_get_user_best_grade',
+  'core_course_get_contents',
+  'mod_forum_get_forums_by_courses',
+  'mod_forum_get_forum_discussions',
+  'core_calendar_get_calendar_events',
 ];
 
 export function createClient(siteUrl: string, token: string): AxiosInstance {

@@ -79,6 +79,33 @@ interface Assignment {
   cutoffdate: number;
 }
 
+interface CourseModule {
+  id: number;
+  name: string;
+  modname: string;
+  modplural?: string;
+  instance?: number;
+  url?: string;
+  description?: string;
+  contents?: {
+    type?: string;
+    filename?: string;
+    filepath?: string;
+    filesize?: number;
+    fileurl?: string;
+    mimetype?: string;
+    timemodified?: number;
+  }[];
+}
+
+interface CourseSection {
+  id: number;
+  name?: string;
+  summary?: string;
+  section: number;
+  modules?: CourseModule[];
+}
+
 class MoodleMcpServer {
   private server: Server;
   private client?: AxiosInstance;
@@ -151,6 +178,54 @@ class MoodleMcpServer {
           },
         },
         {
+          name: 'get_course_contents',
+          description:
+            'Get the visible course page contents: sections, resources, activities, links, descriptions, and downloadable files',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              courseId: {
+                type: 'number',
+                description: 'Course ID',
+              },
+            },
+            required: ['courseId'],
+          },
+          annotations: {
+            title: 'Get course contents',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+        },
+        {
+          name: 'get_announcements',
+          description:
+            'Get recent course announcements from the course news/announcements forum',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              courseId: {
+                type: 'number',
+                description: 'Course ID',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum number of announcements to return. Defaults to 10.',
+              },
+            },
+            required: ['courseId'],
+          },
+          annotations: {
+            title: 'Get announcements',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+        },
+        {
           name: 'get_pending_assignments',
           description: 'Get the assignments the user has not submitted yet, sorted by due date',
           inputSchema: {
@@ -165,6 +240,32 @@ class MoodleMcpServer {
           },
           annotations: {
             title: 'Get pending assignments',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+        },
+        {
+          name: 'get_lecture_schedule',
+          description:
+            'Get upcoming Moodle calendar events for enrolled courses, useful for lecture schedules, sessions, and course events',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              courseId: {
+                type: 'number',
+                description: 'Optional course ID. If not provided, all enrolled courses are used.',
+              },
+              daysAhead: {
+                type: 'number',
+                description: 'How many days ahead to search. Defaults to 120.',
+              },
+            },
+            required: [],
+          },
+          annotations: {
+            title: 'Get lecture schedule',
             readOnlyHint: true,
             destructiveHint: false,
             idempotentHint: true,
@@ -284,6 +385,10 @@ class MoodleMcpServer {
         return await this.getMyCourses();
       case 'get_assignments':
         return await this.getAssignments(args);
+      case 'get_course_contents':
+        return await this.getCourseContents(args);
+      case 'get_announcements':
+        return await this.getAnnouncements(args);
       case 'get_pending_assignments':
         return await this.getPendingAssignments(args);
       case 'get_my_submission_status':
@@ -292,6 +397,8 @@ class MoodleMcpServer {
         return await this.getQuizzes(args);
       case 'get_my_quiz_grade':
         return await this.getMyQuizGrade(args);
+      case 'get_lecture_schedule':
+        return await this.getLectureSchedule(args);
       case 'moodle_check_setup':
         return await this.checkSetup();
       default:
@@ -502,6 +609,81 @@ class MoodleMcpServer {
     );
   }
 
+  private cleanText(value: unknown): string | undefined {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const cleaned = value
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n\s+/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    return cleaned || undefined;
+  }
+
+  private positiveIntegerArg(args: any, name: string, fallback?: number): number {
+    const raw = args?.[name];
+
+    if (raw === undefined || raw === null) {
+      if (fallback !== undefined) {
+        return fallback;
+      }
+      throw new McpError(ErrorCode.InvalidParams, `${name} is required`);
+    }
+
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new McpError(ErrorCode.InvalidParams, `${name} must be a positive integer`);
+    }
+
+    return value;
+  }
+
+  private async fetchForumDiscussions(forumId: number, limit: number) {
+    const client = this.ensureClient();
+
+    try {
+      const response = await client.get('', {
+        params: {
+          wsfunction: 'mod_forum_get_forum_discussions',
+          forumid: forumId,
+          page: 0,
+          perpage: limit,
+        },
+      });
+
+      return response.data.discussions || [];
+    } catch (error) {
+      if (!(error instanceof MoodleApiError) || error.errorcode !== 'servicenotavailable') {
+        throw error;
+      }
+
+      const response = await client.get('', {
+        params: {
+          wsfunction: 'mod_forum_get_forum_discussions_paginated',
+          forumid: forumId,
+          page: 0,
+          perpage: limit,
+          sortby: 'timemodified',
+          sortdirection: 'DESC',
+        },
+      });
+
+      return response.data.discussions || [];
+    }
+  }
+
   private async getMyCourses() {
     const courses = await this.fetchMyCourses();
 
@@ -524,6 +706,116 @@ class MoodleMcpServer {
         {
           type: 'text',
           text: JSON.stringify(assignments, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async getCourseContents(args: any) {
+    const courseId = this.positiveIntegerArg(args, 'courseId');
+
+    console.error(`[API] Requesting course contents for course ${courseId}`);
+
+    const response = await this.ensureClient().get('', {
+      params: {
+        wsfunction: 'core_course_get_contents',
+        courseid: courseId,
+      },
+    });
+
+    const sections = (response.data || []).map((section: CourseSection) => ({
+      id: section.id,
+      section: section.section,
+      name: this.cleanText(section.name),
+      summary: this.cleanText(section.summary),
+      modules: (section.modules || []).map((module: CourseModule) => ({
+        id: module.id,
+        name: module.name,
+        type: module.modname,
+        typeName: module.modplural,
+        instance: module.instance,
+        url: module.url,
+        description: this.cleanText(module.description),
+        files: (module.contents || []).map((content) => ({
+          type: content.type,
+          filename: content.filename,
+          filepath: content.filepath,
+          filesize: content.filesize,
+          fileurl: content.fileurl,
+          mimetype: content.mimetype,
+          timemodified: content.timemodified
+            ? new Date(content.timemodified * 1000).toISOString()
+            : undefined,
+        })),
+      })),
+    }));
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(sections, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async getAnnouncements(args: any) {
+    const courseId = this.positiveIntegerArg(args, 'courseId');
+    const limit = Math.min(this.positiveIntegerArg(args, 'limit', 10), 50);
+
+    console.error(`[API] Requesting announcements for course ${courseId}`);
+
+    const forumsResponse = await this.ensureClient().get('', {
+      params: {
+        wsfunction: 'mod_forum_get_forums_by_courses',
+        courseids: [courseId],
+      },
+    });
+
+    const forums = forumsResponse.data || [];
+    const announcementForums = forums.filter((forum: any) => {
+      const name = String(forum.name || '').toLowerCase();
+      return forum.type === 'news' || name.includes('announcement') || name.includes('news');
+    });
+
+    const forumsToRead = announcementForums.length > 0 ? announcementForums : forums;
+    const discussions = (
+      await Promise.all(
+        forumsToRead.map(async (forum: any) => {
+          const forumDiscussions = await this.fetchForumDiscussions(forum.id, limit);
+          return forumDiscussions.map((discussion: any) => ({
+            id: discussion.discussion ?? discussion.id,
+            postId: discussion.id,
+            forumId: forum.id,
+            forumName: forum.name,
+            subject: discussion.name || discussion.subject,
+            message: this.cleanText(discussion.message),
+            author: discussion.userfullname,
+            created: discussion.created
+              ? new Date(discussion.created * 1000).toISOString()
+              : undefined,
+            modified: discussion.timemodified
+              ? new Date(discussion.timemodified * 1000).toISOString()
+              : undefined,
+            pinned: discussion.pinned,
+            unread: discussion.numunread ?? discussion.unreadpostscount,
+          }));
+        })
+      )
+    )
+      .flat()
+      .sort((a, b) => Date.parse(b.modified || b.created || '0') - Date.parse(a.modified || a.created || '0'))
+      .slice(0, limit);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text:
+            discussions.length > 0
+              ? JSON.stringify(discussions, null, 2)
+              : 'No announcements were found for this course.',
         },
       ],
     };
@@ -687,6 +979,70 @@ class MoodleMcpServer {
         {
           type: 'text',
           text: JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async getLectureSchedule(args: any = {}) {
+    const courseIds = await this.getCourseIds(args);
+    const daysAhead = Math.min(this.positiveIntegerArg(args, 'daysAhead', 120), 366);
+    const now = Math.floor(Date.now() / 1000);
+    const timeEnd = now + daysAhead * 24 * 60 * 60;
+
+    if (courseIds.length === 0) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify([], null, 2) }],
+      };
+    }
+
+    console.error(
+      `[API] Requesting calendar events for courses ${courseIds.join(', ')} over ${daysAhead} days`
+    );
+
+    const response = await this.ensureClient().get('', {
+      params: {
+        wsfunction: 'core_calendar_get_calendar_events',
+        events: {
+          courseids: courseIds,
+          groupids: [],
+          eventids: [],
+        },
+        options: {
+          userevents: false,
+          siteevents: false,
+          timestart: now,
+          timeend: timeEnd,
+          ignorehidden: true,
+        },
+      },
+    });
+
+    const events = (response.data.events || [])
+      .map((event: any) => ({
+        id: event.id,
+        name: event.name,
+        description: this.cleanText(event.description),
+        courseId: event.courseid,
+        groupId: event.groupid,
+        eventType: event.eventtype,
+        moduleName: event.modulename,
+        instance: event.instance,
+        url: event.url,
+        start: event.timestart ? new Date(event.timestart * 1000).toISOString() : undefined,
+        durationSeconds: event.timeduration,
+        visible: event.visible,
+      }))
+      .sort((a: any, b: any) => Date.parse(a.start || '0') - Date.parse(b.start || '0'));
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text:
+            events.length > 0
+              ? JSON.stringify(events, null, 2)
+              : `No course calendar events were found in the next ${daysAhead} days.`,
         },
       ],
     };

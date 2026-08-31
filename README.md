@@ -9,6 +9,15 @@ The server acts only as the user who owns the API token, and it is read-only: th
 ### Course Tools
 - `get_my_courses` - Retrieves the courses the user is enrolled in
   - Includes ID, short name, full name, start/end dates, and completion progress
+- `get_course_contents` - Retrieves the visible course page contents
+  - Includes sections, summaries, activities, resources, links, and file metadata
+  - Requires `courseId`
+- `get_announcements` - Retrieves recent course announcements
+  - Reads the course news/announcements forum, including renamed variants where possible
+  - Requires `courseId`; optionally accepts `limit`
+- `get_lecture_schedule` - Retrieves upcoming course calendar events
+  - Useful for lecture schedules, sessions, and other dated course events
+  - Optionally scoped to a single course with `courseId`; optionally accepts `daysAhead`
 
 ### Assignment Tools
 - `get_assignments` - Retrieves the assignments across the user's courses
@@ -118,6 +127,9 @@ them rather than replacing the file. Then quit Claude Desktop completely
 
 Once configured, Claude can:
 - List the courses you are enrolled in
+- Read visible course page sections, activities, resource links and file metadata
+- Summarize recent course announcements
+- Check upcoming course calendar events and lecture schedules
 - Show which assignments you still need to submit, and when they are due
 - Report the grade and feedback you received on an assignment or quiz
 
