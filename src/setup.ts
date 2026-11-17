@@ -673,7 +673,38 @@ function claudeDesktopConfigPath(): string {
   return path.join(home, '.config', 'Claude', 'claude_desktop_config.json');
 }
 
-function printClientConfig(): void {
+type ClaudeCodeResult = 'registered' | 'no-cli' | 'failed';
+
+// Replaces any existing "moodle" entry in Claude Code with one pointing at this
+// build. Older registrations carried the token in env vars and a stale node
+// path; env vars override the settings file, so they must not be left behind.
+function registerClaudeCode(): ClaudeCodeResult {
+  const serverPath = path.join(repoRoot, 'build', 'index.js');
+  const run = (args: string[]) =>
+    spawnSync('claude', args, { encoding: 'utf8', timeout: 15000 });
+
+  const probe = run(['--version']);
+  if (probe.error || probe.status !== 0) {
+    return 'no-cli';
+  }
+
+  for (const scope of ['local', 'user']) {
+    const removed = run(['mcp', 'remove', 'moodle', '--scope', scope]);
+    if (removed.status === 0) {
+      ok(`Removed old Claude Code registration (${scope} scope)`);
+    }
+  }
+
+  const added = run(['mcp', 'add', 'moodle', '--scope', 'user', '--', process.execPath, serverPath]);
+  if (added.error || added.status !== 0) {
+    warn(`Could not register with Claude Code: ${(added.stderr || added.stdout || String(added.error)).trim()}`);
+    return 'failed';
+  }
+  ok('Registered with Claude Code (user scope)');
+  return 'registered';
+}
+
+function printClientConfig(claudeCode: ClaudeCodeResult = 'no-cli'): void {
   const serverPath = path.join(repoRoot, 'build', 'index.js');
   // Absolute node path, not "node": Claude Desktop launches from the GUI with a
   // minimal PATH that excludes nvm and Homebrew shims.
@@ -701,14 +732,22 @@ function printClientConfig(): void {
   say('  Then quit Claude Desktop completely (Cmd+Q, not just the window) and');
   say('  open it again.');
   say();
-  say(`  ${bold('Claude Code')} — run`);
-  say();
-  say(`    claude mcp add moodle --scope user -- ${nodePath} ${serverPath}`);
+  if (claudeCode === 'registered') {
+    say(`  ${bold('Claude Code')} — already done. Restart any open Claude Code sessions`);
+    say('  (or run /mcp) to pick it up.');
+  } else {
+    say(`  ${bold('Claude Code')} — run`);
+    say();
+    say(`    claude mcp remove moodle --scope user`);
+    say(`    claude mcp add moodle --scope user -- ${nodePath} ${serverPath}`);
+  }
   say();
 }
 
 function printNextSteps(): void {
-  printClientConfig();
+  say();
+  const claudeCode = registerClaudeCode();
+  printClientConfig(claudeCode);
   say('  Then try asking:');
   say(`    ${bold('"What Moodle assignments do I have due this week?"')}`);
   say();
